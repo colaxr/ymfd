@@ -1,7 +1,6 @@
 #!/bin/bash
 # ==============================================
-# VPS 交互式部署 CF Worker 反代脚本（支持 HTTPS）
-# 使用 certbot certonly + webroot 方式
+# VPS 一键部署 CF Worker 反代 + HTTPS（Let’s Encrypt 自动切换）
 # GitHub: colaxr/ymfd/cf-workers-proxy-auto.sh
 # ==============================================
 
@@ -50,18 +49,17 @@ if [ "$USE_HTTPS" = true ]; then
 fi
 
 # -------------------------------
-# 生成 Nginx 配置
+# 生成 Nginx 配置（HTTP 初始）
 # -------------------------------
 NGINX_CONF="/etc/nginx/conf.d/cf-worker-proxy.conf"
 
 echo "生成 Nginx 配置..."
-if [ "$USE_HTTPS" = true ]; then
 cat > $NGINX_CONF <<EOF
 server {
     listen 80;
     server_name $VPS_DOMAIN;
 
-    # 放行 ACME 验证目录
+    # ACME 验证目录放行
     location /.well-known/acme-challenge/ {
         root /var/www/certbot;
     }
@@ -79,25 +77,6 @@ server {
     }
 }
 EOF
-else
-cat > $NGINX_CONF <<EOF
-server {
-    listen 80;
-    server_name $VPS_DOMAIN;
-
-    location / {
-        proxy_pass https://$CF_WORKER_DOMAIN;
-        proxy_set_header Host $CF_WORKER_DOMAIN;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-
-        proxy_ssl_server_name on;
-        proxy_ssl_verify off;
-    }
-}
-EOF
-fi
 
 # -------------------------------
 # 测试 Nginx 配置
@@ -111,24 +90,25 @@ systemctl restart nginx
 systemctl enable nginx
 
 # -------------------------------
-# 申请 HTTPS 证书（可选）
+# HTTPS 证书申请（Let’s Encrypt certonly）
 # -------------------------------
 if [ "$USE_HTTPS" = true ]; then
-    echo "申请 HTTPS 证书..."
+    echo "开始使用 Let’s Encrypt 申请证书..."
     certbot certonly --webroot -w /var/www/certbot -d $VPS_DOMAIN --non-interactive --agree-tos -m $EMAIL
 
-    # 获取证书路径
     CERT_PATH="/etc/letsencrypt/live/$VPS_DOMAIN/fullchain.pem"
     KEY_PATH="/etc/letsencrypt/live/$VPS_DOMAIN/privkey.pem"
 
-    # 修改 Nginx 配置启用 HTTPS
+    echo "生成 Nginx 配置启用 HTTPS..."
     cat > $NGINX_CONF <<EOF
+# HTTP 重定向到 HTTPS
 server {
     listen 80;
     server_name $VPS_DOMAIN;
     return 301 https://\$host\$request_uri;
 }
 
+# HTTPS 反代 CF Worker
 server {
     listen 443 ssl http2;
     server_name $VPS_DOMAIN;
