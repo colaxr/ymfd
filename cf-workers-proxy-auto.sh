@@ -1,61 +1,73 @@
 #!/usr/bin/env bash
 set -e
 
-### ========= 只改这里 =========
+### ========= 配置区（只改这里） =========
 VPS_DOMAIN="vps-domain.com"
 WORKERS_DOMAIN="workers-bound-domain.com"
 EMAIL="admin@example.com"
-### ============================
+### ======================================
 
 CONF_DIR="/etc/nginx/conf.d"
-CERT_DIR="/etc/ssl/$VPS_DOMAIN"
-CONF_FILE="$CONF_DIR/$VPS_DOMAIN.conf"
+CERT_DIR="/etc/ssl/${VPS_DOMAIN}"
+CONF_FILE="${CONF_DIR}/${VPS_DOMAIN}.conf"
 
 echo "=== CF Workers Reverse Proxy Auto ==="
-echo "VPS DOMAIN     : $VPS_DOMAIN"
-echo "WORKERS DOMAIN : $WORKERS_DOMAIN"
+echo "VPS DOMAIN     : ${VPS_DOMAIN}"
+echo "WORKERS DOMAIN : ${WORKERS_DOMAIN}"
 echo "===================================="
 
-# 1. 检查 nginx
-if ! command -v nginx >/dev/null 2>&1; then
-  echo "❌ Nginx not found, please install nginx first"
+# 1. 检查是否 root
+if [ "$EUID" -ne 0 ]; then
+  echo "❌ 请使用 root 用户运行"
   exit 1
 fi
 
-# 2. 安装 acme.sh（如果没有）
-if [ ! -d "$HOME/.acme.sh" ]; then
-  curl https://get.acme.sh | sh -s email=$EMAIL
+# 2. 检查 nginx
+if ! command -v nginx >/dev/null 2>&1; then
+  echo "❌ 未检测到 nginx，请先安装 nginx"
+  exit 1
 fi
 
-# 3. 申请证书（不影响其他站点）
-mkdir -p "$CERT_DIR"
+# 3. 安装 acme.sh（如不存在）
+if [ ! -d "/root/.acme.sh" ]; then
+  echo "==> Installing acme.sh"
+  curl https://get.acme.sh | sh -s email="${EMAIL}"
+fi
 
-~/.acme.sh/acme.sh --issue -d "$VPS_DOMAIN" --nginx
+export PATH="/root/.acme.sh:${PATH}"
 
-~/.acme.sh/acme.sh --install-cert -d "$VPS_DOMAIN" \
-  --key-file       "$CERT_DIR/privkey.pem" \
-  --fullchain-file "$CERT_DIR/fullchain.pem" \
+# 4. 申请证书（standalone，不依赖 nginx 现有配置）
+echo "==> Issuing SSL certificate (standalone mode)"
+mkdir -p "${CERT_DIR}"
+
+~/.acme.sh/acme.sh --issue -d "${VPS_DOMAIN}" --standalone
+
+~/.acme.sh/acme.sh --install-cert -d "${VPS_DOMAIN}" \
+  --key-file       "${CERT_DIR}/privkey.pem" \
+  --fullchain-file "${CERT_DIR}/fullchain.pem" \
   --reloadcmd     "true"
 
-# 4. 写反代配置（独立文件）
-cat > "$CONF_FILE" <<EOF
+# 5. 写入 nginx 反代配置（独立，不影响现有站点）
+echo "==> Writing nginx config"
+
+cat > "${CONF_FILE}" <<EOF
 server {
     listen 80;
-    server_name $VPS_DOMAIN;
+    server_name ${VPS_DOMAIN};
     return 301 https://\$host\$request_uri;
 }
 
 server {
     listen 443 ssl http2;
-    server_name $VPS_DOMAIN;
+    server_name ${VPS_DOMAIN};
 
-    ssl_certificate     $CERT_DIR/fullchain.pem;
-    ssl_certificate_key $CERT_DIR/privkey.pem;
+    ssl_certificate     ${CERT_DIR}/fullchain.pem;
+    ssl_certificate_key ${CERT_DIR}/privkey.pem;
 
     location / {
-        proxy_pass https://$WORKERS_DOMAIN;
+        proxy_pass https://${WORKERS_DOMAIN};
 
-        proxy_set_header Host $WORKERS_DOMAIN;
+        proxy_set_header Host ${WORKERS_DOMAIN};
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto https;
@@ -69,12 +81,15 @@ server {
 }
 EOF
 
-# 5. 测试并 reload
+# 6. 测试并 reload nginx
+echo "==> Testing nginx config"
 nginx -t
+
+echo "==> Reloading nginx"
 systemctl reload nginx
 
 echo "===================================="
 echo "✅ 部署完成"
-echo "访问地址: https://$VPS_DOMAIN"
-echo "反代目标: https://$WORKERS_DOMAIN"
+echo "访问地址: https://${VPS_DOMAIN}"
+echo "反代目标: https://${WORKERS_DOMAIN}"
 echo "===================================="
