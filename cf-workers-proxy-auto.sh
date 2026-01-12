@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==============================================
-# VPS 交互式部署 CF Worker 反代
+# VPS 交互式部署 CF Worker 反代脚本
 # GitHub: colaxr/ymfd/cf-workers-proxy-auto.sh
 # ==============================================
 
@@ -28,24 +28,25 @@ fi
 echo "更新系统并安装 Nginx..."
 apt update && apt install -y nginx curl git software-properties-common
 
-# 安装 Certbot (如果开启 HTTPS)
+# -------------------------------
+# 安装 Certbot（HTTPS 选项）
+# -------------------------------
 if [ "$USE_HTTPS" = true ]; then
-    add-apt-repository universe -y
-    apt install -y certbot python3-certbot-nginx
-fi
-
-# -------------------------------
-# 备份旧配置
-# -------------------------------
-if [ -f /etc/nginx/sites-available/default ]; then
-    cp /etc/nginx/sites-available/default /etc/nginx/sites-available/default.bak
+    echo "安装 Snap Certbot..."
+    apt remove -y certbot python3-certbot-nginx
+    apt install -y snapd
+    snap install core; snap refresh core
+    snap install --classic certbot
+    ln -sf /snap/bin/certbot /usr/bin/certbot
 fi
 
 # -------------------------------
 # 生成 Nginx 配置
 # -------------------------------
+NGINX_CONF="/etc/nginx/conf.d/cf-worker-proxy.conf"
+
 echo "生成 Nginx 配置..."
-cat > /etc/nginx/sites-available/default <<EOF
+cat > $NGINX_CONF <<EOF
 server {
     listen 80;
     server_name $VPS_DOMAIN;
@@ -63,15 +64,19 @@ server {
 }
 EOF
 
+# -------------------------------
 # 测试 Nginx 配置
+# -------------------------------
 nginx -t || { echo "Nginx 配置错误，请检查"; exit 1; }
 
-# 启动并设置开机自启
+# -------------------------------
+# 启动 Nginx 并开机自启
+# -------------------------------
 systemctl restart nginx
 systemctl enable nginx
 
 # -------------------------------
-# 如果开启 HTTPS，自动申请证书
+# 申请 HTTPS 证书（可选）
 # -------------------------------
 if [ "$USE_HTTPS" = true ]; then
     echo "申请 HTTPS 证书..."
