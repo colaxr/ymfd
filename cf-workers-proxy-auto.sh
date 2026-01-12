@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================
-# VPS 交互式部署 CF Worker 反代脚本
-# 支持 HTTPS 自动申请（HTTP-01 验证）
+# VPS 交互式部署 CF Worker 反代脚本（支持 HTTPS）
+# 使用 certbot certonly + webroot 方式
 # GitHub: colaxr/ymfd/cf-workers-proxy-auto.sh
 # ==============================================
 
@@ -55,6 +55,7 @@ fi
 NGINX_CONF="/etc/nginx/conf.d/cf-worker-proxy.conf"
 
 echo "生成 Nginx 配置..."
+if [ "$USE_HTTPS" = true ]; then
 cat > $NGINX_CONF <<EOF
 server {
     listen 80;
@@ -78,6 +79,25 @@ server {
     }
 }
 EOF
+else
+cat > $NGINX_CONF <<EOF
+server {
+    listen 80;
+    server_name $VPS_DOMAIN;
+
+    location / {
+        proxy_pass https://$CF_WORKER_DOMAIN;
+        proxy_set_header Host $CF_WORKER_DOMAIN;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+
+        proxy_ssl_server_name on;
+        proxy_ssl_verify off;
+    }
+}
+EOF
+fi
 
 # -------------------------------
 # 测试 Nginx 配置
@@ -95,7 +115,42 @@ systemctl enable nginx
 # -------------------------------
 if [ "$USE_HTTPS" = true ]; then
     echo "申请 HTTPS 证书..."
-    certbot --webroot -w /var/www/certbot -d $VPS_DOMAIN --non-interactive --agree-tos -m $EMAIL
+    certbot certonly --webroot -w /var/www/certbot -d $VPS_DOMAIN --non-interactive --agree-tos -m $EMAIL
+
+    # 获取证书路径
+    CERT_PATH="/etc/letsencrypt/live/$VPS_DOMAIN/fullchain.pem"
+    KEY_PATH="/etc/letsencrypt/live/$VPS_DOMAIN/privkey.pem"
+
+    # 修改 Nginx 配置启用 HTTPS
+    cat > $NGINX_CONF <<EOF
+server {
+    listen 80;
+    server_name $VPS_DOMAIN;
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name $VPS_DOMAIN;
+
+    ssl_certificate $CERT_PATH;
+    ssl_certificate_key $KEY_PATH;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    location / {
+        proxy_pass https://$CF_WORKER_DOMAIN;
+        proxy_set_header Host $CF_WORKER_DOMAIN;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+
+        proxy_ssl_server_name on;
+        proxy_ssl_verify off;
+    }
+}
+EOF
+
     systemctl restart nginx
 fi
 
