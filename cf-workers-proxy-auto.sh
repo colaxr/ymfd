@@ -1,6 +1,7 @@
 #!/bin/bash
 # ==============================================
 # VPS 交互式部署 CF Worker 反代脚本
+# 支持 HTTPS 自动申请（HTTP-01 验证）
 # GitHub: colaxr/ymfd/cf-workers-proxy-auto.sh
 # ==============================================
 
@@ -41,6 +42,14 @@ if [ "$USE_HTTPS" = true ]; then
 fi
 
 # -------------------------------
+# 创建 ACME 验证目录
+# -------------------------------
+if [ "$USE_HTTPS" = true ]; then
+    mkdir -p /var/www/certbot
+    chown -R www-data:www-data /var/www/certbot
+fi
+
+# -------------------------------
 # 生成 Nginx 配置
 # -------------------------------
 NGINX_CONF="/etc/nginx/conf.d/cf-worker-proxy.conf"
@@ -51,6 +60,12 @@ server {
     listen 80;
     server_name $VPS_DOMAIN;
 
+    # 放行 ACME 验证目录
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    # 其他全部反代到 CF Worker
     location / {
         proxy_pass https://$CF_WORKER_DOMAIN;
         proxy_set_header Host $CF_WORKER_DOMAIN;
@@ -80,7 +95,7 @@ systemctl enable nginx
 # -------------------------------
 if [ "$USE_HTTPS" = true ]; then
     echo "申请 HTTPS 证书..."
-    certbot --nginx -d $VPS_DOMAIN --non-interactive --agree-tos -m $EMAIL
+    certbot --webroot -w /var/www/certbot -d $VPS_DOMAIN --non-interactive --agree-tos -m $EMAIL
     systemctl restart nginx
 fi
 
