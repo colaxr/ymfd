@@ -16,19 +16,16 @@ echo "VPS DOMAIN     : ${VPS_DOMAIN}"
 echo "WORKERS DOMAIN : ${WORKERS_DOMAIN}"
 echo "===================================="
 
-# 1. 检查是否 root
 if [ "$EUID" -ne 0 ]; then
   echo "❌ 请使用 root 用户运行"
   exit 1
 fi
 
-# 2. 检查 nginx
 if ! command -v nginx >/dev/null 2>&1; then
   echo "❌ 未检测到 nginx，请先安装 nginx"
   exit 1
 fi
 
-# 3. 安装 acme.sh（如不存在）
 if [ ! -d "/root/.acme.sh" ]; then
   echo "==> Installing acme.sh"
   curl https://get.acme.sh | sh -s email="${EMAIL}"
@@ -36,7 +33,6 @@ fi
 
 export PATH="/root/.acme.sh:${PATH}"
 
-# 4. 申请证书（standalone，不依赖 nginx 现有配置）
 echo "==> Issuing SSL certificate (standalone mode)"
 mkdir -p "${CERT_DIR}"
 
@@ -47,7 +43,6 @@ mkdir -p "${CERT_DIR}"
   --fullchain-file "${CERT_DIR}/fullchain.pem" \
   --reloadcmd     "true"
 
-# 5. 写入 nginx 反代配置（独立，不影响现有站点）
 echo "==> Writing nginx config"
 
 cat > "${CONF_FILE}" <<EOF
@@ -81,7 +76,6 @@ server {
 }
 EOF
 
-# 6. 测试并 reload nginx
 echo "==> Testing nginx config"
 nginx -t
 
